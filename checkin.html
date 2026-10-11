@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Check-in | Real Life Christian Communities</title>
+  <meta name="theme-color" content="#365233">
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="stylesheet" href="assets/styles.css">
+  <style>
+    body { min-height: 100vh; background: var(--brand); }
+
+    .shell { max-width: 460px; margin: 0 auto; padding: 0 16px 40px; }
+
+    .brand-head { padding: 30px 8px 26px; }
+    .brand-head img { height: 40px; width: auto; margin: 0 auto; }
+
+    .card {
+      background: var(--white);
+      border-radius: 20px;
+      padding: 28px 24px 26px;
+      box-shadow: 0 18px 40px rgba(0,0,0,.18);
+    }
+    .card h1 { margin: 0 0 6px; font-size: 24px; font-weight: 800; letter-spacing: -.01em; color: var(--brand); }
+    .card .sub { margin: 0 0 24px; color: var(--muted); font-size: 15px; }
+
+    .submit { width: 100%; padding: 16px; font-size: 16px; margin-top: 4px; }
+    #formError { margin-bottom: 16px; }
+
+    .result { text-align: center; padding: 14px 0 6px; }
+    .result svg { width: 64px; height: 64px; margin: 0 auto 16px; }
+    .result h2 { margin: 0 0 8px; font-size: 22px; color: var(--brand); }
+    .result p { margin: 0; color: var(--muted); font-size: 15px; }
+    .result.bad h2 { color: var(--danger); }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="brand-head">
+      <img src="assets/logo-white.png" alt="Real Life Christian Communities">
+    </header>
+
+    <main class="card" id="card">
+      <h1 id="title">Check in</h1>
+      <p class="sub" id="sub">Loading...</p>
+
+      <form id="attendanceForm" hidden novalidate>
+        <div id="fields"></div>
+        <div id="formError" class="notice notice-error" role="alert" hidden></div>
+        <button type="submit" class="btn btn-primary submit" id="submitBtn">Check in</button>
+      </form>
+
+      <div id="result" class="result" hidden></div>
+    </main>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="assets/api.js"></script>
+  <script>
+    var $ = function (id) { return document.getElementById(id); };
+    var params = new URLSearchParams(window.location.search);
+    var sessionId = params.get("sessionId") || "";
+    var qrId = params.get("qrId") || "";
+    var formFields = [];
+
+    var ICON_OK = '<svg viewBox="0 0 64 64" fill="none" aria-hidden="true"><circle cx="32" cy="32" r="30" fill="#e6ede4"/><circle cx="32" cy="32" r="22" fill="#365233"/><path d="M22 33l7 7 13-15" stroke="#fff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    var ICON_BAD = '<svg viewBox="0 0 64 64" fill="none" aria-hidden="true"><circle cx="32" cy="32" r="30" fill="#f7e5e1"/><circle cx="32" cy="32" r="22" fill="#9a3629"/><path d="M24 24l16 16M40 24L24 40" stroke="#fff" stroke-width="4.5" stroke-linecap="round"/></svg>';
+
+    function showResult(ok, heading, text) {
+      $("attendanceForm").hidden = true;
+      $("title").hidden = true;
+      $("sub").hidden = true;
+      var r = $("result");
+      r.className = "result" + (ok ? "" : " bad");
+      r.innerHTML = (ok ? ICON_OK : ICON_BAD) + "<h2>" + rlccEsc(heading) + "</h2><p>" + rlccEsc(text) + "</p>";
+      r.hidden = false;
+    }
+
+    function inputAttrs(label) {
+      var l = label.toLowerCase();
+      if (/e-?mail/.test(l)) return 'type="email" inputmode="email" autocomplete="email"';
+      if (/phone|mobile|contact|cell/.test(l)) return 'type="tel" inputmode="tel" autocomplete="tel"';
+      if (/name/.test(l)) return 'type="text" autocomplete="name"';
+      return 'type="text" autocomplete="off"';
+    }
+
+    function buildForm(cfg) {
+      formFields = cfg.formFields || ["Name"];
+      $("title").textContent = cfg.appTitle;
+      document.title = "Check-in | " + cfg.appTitle;
+      $("sub").textContent = "Enter your details to record your attendance.";
+
+      var html = "";
+      formFields.forEach(function (f, i) {
+        html += '<div class="field"><label for="field_' + i + '">' + rlccEsc(f) + '</label>' +
+                '<input id="field_' + i + '" ' + inputAttrs(f) + ' required placeholder="Your ' + rlccEsc(f.toLowerCase()) + '"></div>';
+      });
+      $("fields").innerHTML = html;
+      $("attendanceForm").hidden = false;
+      var first = $("field_0");
+      if (first) first.focus();
+    }
+
+    function init() {
+      if (!sessionId || !qrId) {
+        $("title").textContent = "Scan the code";
+        $("sub").textContent = "Open this page by scanning the QR code shown at the check-in screen.";
+        return;
+      }
+      window.rlccApi({ action: "config" }).then(function (cfg) {
+        if (cfg.status !== "success") throw new Error("bad-config");
+        buildForm(cfg);
+      }).catch(function (err) {
+        $("sub").textContent = err.message === "not-configured"
+          ? "This check-in page isn't set up yet. Please let a staff member know."
+          : "We couldn't load the check-in form. Check your connection and scan the code again.";
+      });
+    }
+
+    $("attendanceForm").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var err = $("formError");
+      err.hidden = true;
+
+      var query = { action: "submit", sessionId: sessionId, qrId: qrId };
+      for (var i = 0; i < formFields.length; i++) {
+        var input = $("field_" + i);
+        var val = input.value.trim();
+        if (!val) {
+          err.textContent = "Please fill in your " + formFields[i].toLowerCase() + ".";
+          err.hidden = false;
+          input.focus();
+          return;
+        }
+        query[formFields[i]] = val;
+      }
+
+      var btn = $("submitBtn");
+      btn.textContent = "Checking in...";
+      btn.disabled = true;
+
+      window.rlccApi(query).then(function (data) {
+        if (data.status === "success") {
+          showResult(true, "You're checked in", "Your attendance has been recorded. Thank you for being here.");
+        } else {
+          showResult(false, "Code expired", data.message || "Please scan the current code on the screen.");
+        }
+      }).catch(function () {
+        btn.textContent = "Check in";
+        btn.disabled = false;
+        err.textContent = "Couldn't reach the server. Check your connection and try again.";
+        err.hidden = false;
+      });
+    });
+
+    init();
+  </script>
+</body>
+</html>
